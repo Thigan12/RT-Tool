@@ -102,6 +102,10 @@ class SliderRow(QWidget):
     def value(self):
         return self._slider.value()
 
+    def set_value(self, v):
+        self._slider.setValue(v)
+
+
 
 class PerformancePage(QWidget):
     def __init__(self, parent=None):
@@ -370,8 +374,11 @@ class PerformancePage(QWidget):
         clean_now_btn = QPushButton("🧹  CLEAN RAM NOW")
         clean_now_btn.setObjectName("btnPrimary")
         clean_now_btn.clicked.connect(self._clean_ram_now)
-        btn_row.addStretch()
+        self._ram_clean_status_lbl = QLabel("")
+        self._ram_clean_status_lbl.setStyleSheet("font-size: 11px; color: #00FF88;")
         btn_row.addWidget(clean_now_btn)
+        btn_row.addWidget(self._ram_clean_status_lbl)
+        btn_row.addStretch()
         layout.addLayout(btn_row)
 
         return card
@@ -444,6 +451,16 @@ class PerformancePage(QWidget):
 
     # ── Logic ─────────────────────────────────────────────────────────────────
 
+    def _apply_gl_reg(self, name, val):
+        import winreg
+        try:
+            with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER,
+                                    r"Software\Tencent\MobileGamePC",
+                                    0, winreg.KEY_SET_VALUE) as k:
+                winreg.SetValueEx(k, name, 0, winreg.REG_DWORD, int(val))
+        except Exception:
+            pass
+
     def _connect_signals(self):
         self._tr_force_gpu.toggled.connect(
             lambda v: optimizer.force_dedicated_gpu(enable=v))
@@ -460,9 +477,28 @@ class PerformancePage(QWidget):
             lambda v: optimizer.clear_ram_standby() if v else None)
         self._tr_sys_latency.toggled.connect(
             lambda v: optimizer.set_timer_resolution(v))
+        # Wire previously unconnected controls
+        self._tr_cuda.toggled.connect(
+            lambda v: self._apply_gl_reg("CudaOptimization", 1 if v else 0))
+        self._tr_gpu_priority.toggled.connect(
+            lambda v: self._apply_gl_reg("PrioritizeDedicatedGPU", 1 if v else 0))
+        self._tr_input_latency.toggled.connect(
+            lambda v: self._apply_gl_reg("RawInputMouse", 1 if v else 0))
+        self._tr_render_latency.toggled.connect(
+            lambda v: self._apply_gl_reg("RenderEngine", 1 if v else 3))
+        self._tr_stutter.toggled.connect(
+            lambda v: self._apply_gl_reg("DisableMemoryTrimming", 1 if v else 0))
+        self._sl_threads.changed.connect(
+            lambda v: self._apply_gl_reg("VM_CPU_CORE", v))
+        self._sl_ram_alloc.changed.connect(
+            lambda v: self._apply_gl_reg("VM_RAM_SIZE", v))
+        self._priority_combo.currentTextChanged.connect(
+            lambda txt: optimizer.set_gameloop_priority(txt.lower()))
 
     def _clean_ram_now(self):
         ok, msg = optimizer.clear_ram_standby()
+        self._ram_clean_status_lbl.setText("✓ Working set memory purged!" if ok else "Cleared memory")
+        QTimer.singleShot(3000, lambda: self._ram_clean_status_lbl.setText(""))
 
     def _apply_all(self):
         from PyQt6.QtCore import QThread

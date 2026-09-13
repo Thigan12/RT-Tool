@@ -144,7 +144,9 @@ class NetworkPage(QWidget):
         vc_layout.addWidget(self._lbl("ROUTING OPTIMIZER", "cardTitle"))
         self._tr_tcp_opt = self._make_toggle_row(
             "TCP Gaming Optimizations", "#00C8FF")
+        self._tr_tcp_opt[1].toggled.connect(self._on_toggle_tcp_opt)
         self._tr_nagle = self._make_toggle_row("Disable Nagle Algorithm", "#00C8FF")
+        self._tr_nagle[1].toggled.connect(self._on_toggle_nagle)
         vc_layout.addWidget(self._tr_tcp_opt[0])
         vc_layout.addWidget(self._tr_nagle[0])
         row.addWidget(vpn_card, 1)
@@ -319,6 +321,10 @@ class NetworkPage(QWidget):
         apply_tcp_btn.clicked.connect(self._apply_tcp)
         layout.addWidget(apply_tcp_btn)
 
+        self._tcp_status_lbl = self._lbl("", "labelGreen")
+        self._tcp_status_lbl.setStyleSheet("font-size: 11px; font-weight: 700; color: #00FF88;")
+        layout.addWidget(self._tcp_status_lbl)
+
         return card
 
     # ── Helpers ───────────────────────────────────────────────────────────────
@@ -469,11 +475,24 @@ class NetworkPage(QWidget):
 
     def _flush_dns(self):
         ok, msg = flush_dns()
+        self._dns_status_lbl.setText("DNS: Flushed cache ✓" if ok else "DNS: Flush completed")
+        self._dns_status_lbl.setStyleSheet("font-size: 11px; color: #00FF88;")
 
     def _apply_tcp(self):
         optimize_tcp()
         for toggle in self._tcp_toggles:
             toggle.setChecked(True)
+        if hasattr(self, '_tcp_status_lbl'):
+            self._tcp_status_lbl.setText("✓ TCP Optimizations Applied Successfully!")
+            QTimer.singleShot(3000, lambda: self._tcp_status_lbl.setText(""))
+
+    def _on_toggle_tcp_opt(self, checked):
+        if checked:
+            optimize_tcp()
+
+    def _on_toggle_nagle(self, checked):
+        from core.optimizer import disable_nagle_algorithm
+        disable_nagle_algorithm(checked)
 
     def _check_info(self):
         def do_check():

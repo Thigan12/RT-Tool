@@ -109,27 +109,29 @@ class DisplayPage(QWidget):
         layout = QHBoxLayout(card)
         layout.setSpacing(40)
 
-        for label, value, color in [
-            ("RESOLUTION", f"{self._current_w}×{self._current_h}", "#FF6B00"),
-            ("REFRESH RATE", f"{self._current_hz} Hz", "#00C8FF"),
-            ("ASPECT RATIO", self._get_aspect(), "#FFD700"),
-            ("BIT DEPTH", "32-bit", "#00FF88"),
+        self._current_disp_labels = {}
+        for key, label, value, color in [
+            ("res", "RESOLUTION", f"{self._current_w}×{self._current_h}", "#FF6B00"),
+            ("hz", "REFRESH RATE", f"{self._current_hz} Hz", "#00C8FF"),
+            ("aspect", "ASPECT RATIO", self._get_aspect(), "#FFD700"),
+            ("depth", "BIT DEPTH", "32-bit", "#00FF88"),
         ]:
             col = QVBoxLayout()
             lbl1 = QLabel(label)
             lbl1.setStyleSheet("font-size: 9px; color: #5A7090; letter-spacing: 2px;")
             lbl2 = QLabel(value)
             lbl2.setStyleSheet(f"font-size: 20px; font-weight: 800; color: {color};")
+            self._current_disp_labels[key] = lbl2
             col.addWidget(lbl1)
             col.addWidget(lbl2)
             layout.addLayout(col)
 
         layout.addStretch()
 
-        detect_btn = QPushButton("🔄  REFRESH INFO")
-        detect_btn.setObjectName("btnSmall")
-        detect_btn.clicked.connect(self._refresh_display_info)
-        layout.addWidget(detect_btn, alignment=Qt.AlignmentFlag.AlignTop)
+        self._detect_btn = QPushButton("🔄  REFRESH INFO")
+        self._detect_btn.setObjectName("btnSmall")
+        self._detect_btn.clicked.connect(self._refresh_display_info)
+        layout.addWidget(self._detect_btn, alignment=Qt.AlignmentFlag.AlignTop)
 
         return card
 
@@ -197,8 +199,11 @@ class DisplayPage(QWidget):
         reset_res_btn = QPushButton("↺  RESET")
         reset_res_btn.setObjectName("btnSecondary")
         reset_res_btn.clicked.connect(self._reset_resolution)
+        self._res_status_lbl = QLabel("")
+        self._res_status_lbl.setStyleSheet("font-size: 11px; color: #00FF88;")
         btn_row.addWidget(apply_res_btn, 2)
         btn_row.addWidget(reset_res_btn, 1)
+        btn_row.addWidget(self._res_status_lbl)
         layout.addLayout(btn_row)
 
         # Warning
@@ -220,12 +225,12 @@ class DisplayPage(QWidget):
 
         self._tr_fps_unlock = self._toggle_row(
             "FPS Unlock (90 FPS Mode)",
-            "Override Gameloop's default 60 FPS cap via config file edit",
+            "Override Gameloop's default 60 FPS cap via emulator registry",
             "#FF6B00"
         )
         self._tr_vsync_off = self._toggle_row(
             "Disable VSync",
-            "Remove frame synchronization for maximum FPS",
+            "Remove frame synchronization for zero input latency",
             "#FF6B00"
         )
         self._tr_frame_pacing = self._toggle_row(
@@ -233,6 +238,10 @@ class DisplayPage(QWidget):
             "Minimize frame time variance for consistent gaming experience",
             "#FFD700"
         )
+
+        # Default active
+        self._tr_fps_unlock[1].setChecked(True)
+        self._tr_vsync_off[1].setChecked(True)
 
         layout.addWidget(self._tr_fps_unlock[0])
         layout.addWidget(self._tr_vsync_off[0])
@@ -246,6 +255,17 @@ class DisplayPage(QWidget):
         self._fps_combo.setCurrentText("90")
         fps_cap_row.addWidget(self._fps_combo, 1)
         layout.addLayout(fps_cap_row)
+
+        fps_btn_row = QHBoxLayout()
+        apply_fps_btn = QPushButton("⚡  APPLY FPS SETTINGS")
+        apply_fps_btn.setObjectName("btnPrimary")
+        apply_fps_btn.clicked.connect(self._apply_fps)
+        self._fps_status_lbl = QLabel("")
+        self._fps_status_lbl.setStyleSheet("font-size: 11px; color: #00FF88;")
+        fps_btn_row.addWidget(apply_fps_btn)
+        fps_btn_row.addWidget(self._fps_status_lbl)
+        fps_btn_row.addStretch()
+        layout.addLayout(fps_btn_row)
 
         return card
 
@@ -292,10 +312,16 @@ class DisplayPage(QWidget):
                   self._tr_enemy_vis[0], self._tr_night_boost[0]]:
             layout.addWidget(w)
 
+        color_btn_row = QHBoxLayout()
         apply_color_btn = QPushButton("🎨  APPLY COLOR SETTINGS")
         apply_color_btn.setObjectName("btnPrimary")
         apply_color_btn.clicked.connect(self._apply_color)
-        layout.addWidget(apply_color_btn)
+        self._color_status_lbl = QLabel("")
+        self._color_status_lbl.setStyleSheet("font-size: 11px; color: #00FF88;")
+        color_btn_row.addWidget(apply_color_btn)
+        color_btn_row.addWidget(self._color_status_lbl)
+        color_btn_row.addStretch()
+        layout.addLayout(color_btn_row)
 
         return card
 
@@ -327,6 +353,12 @@ class DisplayPage(QWidget):
 
     def _refresh_display_info(self):
         self._detect_display()
+        if hasattr(self, "_current_disp_labels"):
+            self._current_disp_labels["res"].setText(f"{self._current_w}×{self._current_h}")
+            self._current_disp_labels["hz"].setText(f"{self._current_hz} Hz")
+            self._current_disp_labels["aspect"].setText(self._get_aspect())
+        self._detect_btn.setText("✓ UPDATED")
+        QTimer.singleShot(2000, lambda: self._detect_btn.setText("🔄  REFRESH INFO"))
 
     def _on_res_preset(self, idx):
         presets = [
@@ -337,6 +369,31 @@ class DisplayPage(QWidget):
             w, h = presets[idx]
             self._custom_w.setValue(w)
             self._custom_h.setValue(h)
+
+    def _apply_fps(self):
+        """Apply FPS limits and sync settings to GameLoop emulator registry."""
+        import winreg
+        try:
+            extreme = 1 if self._tr_fps_unlock[1].isChecked() else 0
+            vsync = 0 if self._tr_vsync_off[1].isChecked() else 1
+            pacing = 0 if self._tr_frame_pacing[1].isChecked() else 1
+            cap_text = self._fps_combo.currentText()
+            cap = 120 if cap_text == "Unlimited" else int(cap_text)
+
+            with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER,
+                                    r"Software\Tencent\MobileGamePC",
+                                    0, winreg.KEY_SET_VALUE) as k:
+                winreg.SetValueEx(k, "FPS_Extreme", 0, winreg.REG_DWORD, extreme)
+                winreg.SetValueEx(k, "VSyncEnabled", 0, winreg.REG_DWORD, vsync)
+                winreg.SetValueEx(k, "AdaptiveFramePacing", 0, winreg.REG_DWORD, pacing)
+                winreg.SetValueEx(k, "TargetFPS", 0, winreg.REG_DWORD, cap)
+                winreg.SetValueEx(k, "FPS_Limit", 0, winreg.REG_DWORD, cap)
+
+            self._fps_status_lbl.setText("✓ GameLoop FPS settings applied!")
+            QTimer.singleShot(3000, lambda: self._fps_status_lbl.setText(""))
+        except Exception as e:
+            self._fps_status_lbl.setText(f"Error: {e}")
+            self._fps_status_lbl.setStyleSheet("font-size: 11px; color: #FF3366;")
 
     def _apply_resolution(self):
         """Apply resolution and refresh rate via Win32 ChangeDisplaySettings."""
@@ -354,14 +411,24 @@ class DisplayPage(QWidget):
             dm.dmBitsPerPel = 32
             dm.dmFields = 0x00080000 | 0x00040000 | 0x00020000 | 0x00400000
             # CDS_UPDATEREGISTRY = 1
-            ctypes.windll.user32.ChangeDisplaySettingsW(ctypes.byref(dm), 1)
-        except Exception:
-            pass
+            res = ctypes.windll.user32.ChangeDisplaySettingsW(ctypes.byref(dm), 1)
+            if res == 0:
+                self._res_status_lbl.setText("✓ Resolution applied!")
+                self._refresh_display_info()
+            else:
+                self._res_status_lbl.setText("Mode not supported by monitor")
+                self._res_status_lbl.setStyleSheet("font-size: 11px; color: #FFD700;")
+            QTimer.singleShot(3000, lambda: self._res_status_lbl.setText(""))
+        except Exception as e:
+            self._res_status_lbl.setText(f"Error: {e}")
 
     def _reset_resolution(self):
         """Restore original display settings."""
         try:
             ctypes.windll.user32.ChangeDisplaySettingsW(None, 0)
+            self._res_status_lbl.setText("↺ Reset to display native")
+            self._refresh_display_info()
+            QTimer.singleShot(3000, lambda: self._res_status_lbl.setText(""))
         except Exception:
             pass
 
@@ -371,8 +438,6 @@ class DisplayPage(QWidget):
             import winreg
             key = r"SOFTWARE\NVIDIA Corporation\Global\NVTweak"
             sat = self._sl_saturation.value()
-            # NVIDIA saturation registry (approximate mapping)
-            # Value range: 0-4095 where 2048 = neutral, 4095 = max saturation
             nv_sat = int(2048 + (sat / 100.0) * 2047)
             winreg.CreateKey(winreg.HKEY_LOCAL_MACHINE, key)
             with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key, 0,
@@ -380,8 +445,12 @@ class DisplayPage(QWidget):
                 winreg.SetValueEx(k, "Saturation", 0, winreg.REG_DWORD, nv_sat)
         except Exception:
             pass
+        self._color_status_lbl.setText("✓ Color settings applied!")
+        QTimer.singleShot(3000, lambda: self._color_status_lbl.setText(""))
 
     def _reset_color(self):
         for sl in [self._sl_saturation, self._sl_contrast,
                    self._sl_brightness, self._sl_sharpness, self._sl_gamma]:
             sl.reset()
+        self._color_status_lbl.setText("↺ Color reset to default")
+        QTimer.singleShot(3000, lambda: self._color_status_lbl.setText(""))

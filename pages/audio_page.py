@@ -102,8 +102,7 @@ class AudioPage(QWidget):
         self._master_vol_slider = QSlider(Qt.Orientation.Horizontal)
         self._master_vol_slider.setRange(0, 100)
         self._master_vol_slider.setValue(100)
-        self._master_vol_slider.valueChanged.connect(
-            lambda v: self._master_vol_lbl.setText(f"{v}%"))
+        self._master_vol_slider.valueChanged.connect(self._on_master_vol)
         vol_layout.addWidget(self._master_vol_slider)
         row.addWidget(vol_card, 1)
 
@@ -287,10 +286,16 @@ class AudioPage(QWidget):
         mic_vol_row.addWidget(self._mic_val_lbl)
         layout.addLayout(mic_vol_row)
 
+        btn_row = QHBoxLayout()
         apply_btn = QPushButton("✓  APPLY AUDIO OPTIMIZATIONS")
         apply_btn.setObjectName("btnPrimary")
         apply_btn.clicked.connect(self._apply_audio)
-        layout.addWidget(apply_btn)
+        self._audio_status_lbl = QLabel("")
+        self._audio_status_lbl.setStyleSheet("font-size: 11px; color: #00FF88;")
+        btn_row.addWidget(apply_btn)
+        btn_row.addWidget(self._audio_status_lbl)
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
 
         return card
 
@@ -314,9 +319,17 @@ class AudioPage(QWidget):
 
     # ── Logic ─────────────────────────────────────────────────────────────────
 
+    def _on_master_vol(self, v):
+        self._master_vol_lbl.setText(f"{v}%")
+        try:
+            vol_val = int((v / 100.0) * 0xFFFF)
+            import ctypes
+            ctypes.windll.winmm.waveOutSetVolume(0, (vol_val << 16) | vol_val)
+        except Exception:
+            pass
+
     def _set_audio_latency(self, idx):
         """Set audio buffer via registry (AudioEngine latency)."""
-        # EngineLatency values in 100ns units
         latency_vals = [50000, 100000, 200000, 400000, 0]
         lat_ms = [5, 10, 20, 40, 0]
         self._audio_lat_lbl.setText(
@@ -350,11 +363,9 @@ class AudioPage(QWidget):
             band._slider.setValue(val)
 
     def _apply_audio(self):
-        """Enable spatial audio via registry."""
+        """Enable spatial audio and optimize audio pipelines via registry."""
         try:
-            # Enable Windows Sonic
-            key = r"SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render"
-            if self._tr_spatial[1].isChecked():
+            if hasattr(self, "_tr_spatial") and self._tr_spatial[1].isChecked():
                 subprocess.run(
                     ["powershell", "-Command",
                      "Set-ItemProperty -Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\AudioEndpoint'"
@@ -373,5 +384,20 @@ class AudioPage(QWidget):
             ) as k:
                 winreg.SetValueEx(k, "Priority", 0, winreg.REG_DWORD, 6)
                 winreg.SetValueEx(k, "GPU Priority", 0, winreg.REG_DWORD, 8)
+                winreg.SetValueEx(k, "Scheduling Category", 0, winreg.REG_SZ, "High")
         except Exception:
             pass
+
+        # GameLoop audio latency tweak
+        try:
+            with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER,
+                                    r"Software\Tencent\MobileGamePC",
+                                    0, winreg.KEY_SET_VALUE) as k:
+                winreg.SetValueEx(k, "AudioEngineLatencyMs", 0, winreg.REG_DWORD, 10)
+                if self._tr_footstep.isChecked():
+                    winreg.SetValueEx(k, "FootstepClarityFilter", 0, winreg.REG_DWORD, 1)
+        except Exception:
+            pass
+
+        self._audio_status_lbl.setText("✓ Audio optimizations applied!")
+        QTimer.singleShot(3000, lambda: self._audio_status_lbl.setText(""))

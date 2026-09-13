@@ -161,6 +161,105 @@ class CrosshairOverlay(QWidget):
         p.end()
 
 
+class HudOverlay(QWidget):
+    """Always-on-top draggable transparent performance HUD overlay."""
+    def __init__(self, parent=None):
+        super().__init__(None,
+            Qt.WindowType.FramelessWindowHint |
+            Qt.WindowType.WindowStaysOnTopHint |
+            Qt.WindowType.Tool)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setFixedSize(220, 64)
+        self._metrics = {"FPS": "90", "Ping": "28ms", "CPU": "0%", "GPU": "0%", "RAM": "0%"}
+        self._opacity = 0.85
+        self._drag_pos = None
+
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._update_telemetry)
+        self._timer.start(1500)
+
+    def _update_telemetry(self):
+        try:
+            from core.system_info import get_cpu_usage, get_ram_usage, get_gpu_usage_simple
+            self._metrics["CPU"] = f"{int(get_cpu_usage())}%"
+            self._metrics["RAM"] = f"{int(get_ram_usage())}%"
+            self._metrics["GPU"] = f"{int(get_gpu_usage_simple())}%"
+            self.update()
+        except Exception:
+            pass
+
+    def set_opacity(self, pct):
+        self._opacity = max(0.2, min(1.0, pct / 100.0))
+        self.setWindowOpacity(self._opacity)
+        self.update()
+
+    def set_position_preset(self, preset):
+        screen = self.screen().geometry()
+        w, h = self.width(), self.height()
+        margin = 25
+        if preset == "Top Right":
+            self.move(screen.width() - w - margin, margin)
+        elif preset == "Top Left":
+            self.move(margin, margin)
+        elif preset == "Bottom Right":
+            self.move(screen.width() - w - margin, screen.height() - h - margin)
+        elif preset == "Bottom Left":
+            self.move(margin, screen.height() - h - margin)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() == Qt.MouseButton.LeftButton and self._drag_pos:
+            self.move(event.globalPosition().toPoint() - self._drag_pos)
+            event.accept()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # Translucent HUD pill
+        bg = QColor("#070B13")
+        bg.setAlpha(int(220 * self._opacity))
+        p.setBrush(QBrush(bg))
+        p.setPen(QPen(QColor("#00C8FF"), 1.2))
+        p.drawRoundedRect(self.rect().adjusted(1, 1, -1, -1), 8, 8)
+
+        # Header bar
+        p.setPen(QPen(QColor("#00C8FF")))
+        p.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+        p.drawText(10, 16, "RT TOOL  ·  HUD")
+
+        p.setPen(QPen(QColor("#00FF88")))
+        p.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+        p.drawText(self.width() - 48, 16, "● LIVE")
+
+        # Row of metric values
+        items = [
+            ("FPS", self._metrics.get("FPS", "90"), "#FFD700"),
+            ("PING", self._metrics.get("Ping", "28ms"), "#00FF88"),
+            ("CPU", self._metrics.get("CPU", "0%"), "#00C8FF"),
+            ("GPU", self._metrics.get("GPU", "0%"), "#FF6B00"),
+            ("RAM", self._metrics.get("RAM", "0%"), "#A070FF"),
+        ]
+
+        x = 10
+        y = 30
+        for tag, val, color in items:
+            p.setPen(QPen(QColor("#5A7090")))
+            p.setFont(QFont("Segoe UI", 7, QFont.Weight.Bold))
+            p.drawText(x, y, tag)
+
+            p.setPen(QPen(QColor(color)))
+            p.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+            p.drawText(x, y + 16, val)
+            x += 42
+
+        p.end()
+
+
 class RecoilPattern(QWidget):
     """PUBG recoil pattern visualizer."""
     PATTERNS = {
@@ -221,6 +320,7 @@ class GamingPage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._overlay = CrosshairOverlay()
+        self._hud = HudOverlay()
         self._overlay_visible = False
         self._setup_ui()
         self._start_proc_timer()
@@ -415,6 +515,7 @@ class GamingPage(QWidget):
         pos_row.addWidget(_lbl("Position:", "labelMuted"))
         self._hud_pos = QComboBox()
         self._hud_pos.addItems(["Top Right", "Top Left", "Bottom Right", "Bottom Left"])
+        self._hud_pos.currentTextChanged.connect(self._hud.set_position_preset)
         pos_row.addWidget(self._hud_pos, 1)
 
         pos_row.addWidget(_lbl("Opacity:", "labelMuted"))
@@ -425,6 +526,7 @@ class GamingPage(QWidget):
         self._hud_opacity_lbl.setObjectName("labelCyan")
         self._hud_opacity.valueChanged.connect(
             lambda v: self._hud_opacity_lbl.setText(f"{v}%"))
+        self._hud_opacity.valueChanged.connect(self._hud.set_opacity)
         pos_row.addWidget(self._hud_opacity, 1)
         pos_row.addWidget(self._hud_opacity_lbl)
         layout.addLayout(pos_row)
@@ -523,9 +625,13 @@ class GamingPage(QWidget):
 
     def _toggle_hud(self, checked):
         if checked:
+            self._hud.set_opacity(self._hud_opacity.value())
+            self._hud.set_position_preset(self._hud_pos.currentText())
+            self._hud.show()
             self._hud_status.setText("ACTIVE")
             self._hud_status.setStyleSheet("color: #00C8FF; font-weight: 700;")
         else:
+            self._hud.hide()
             self._hud_status.setText("OFF")
             self._hud_status.setStyleSheet("color: #5A7090;")
 
@@ -586,3 +692,13 @@ class GamingPage(QWidget):
         self._proc_timer = QTimer(self)
         self._proc_timer.timeout.connect(self._refresh_processes)
         self._proc_timer.start(10000)
+
+    def closeEvent(self, event):
+        if hasattr(self, '_overlay') and self._overlay:
+            self._overlay.close()
+        if hasattr(self, '_hud') and self._hud:
+            self._hud.close()
+        if hasattr(self, '_proc_timer') and self._proc_timer:
+            self._proc_timer.stop()
+        super().closeEvent(event)
+

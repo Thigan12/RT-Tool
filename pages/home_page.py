@@ -381,24 +381,39 @@ class HomePage(QWidget):
             self._launch_status.setText(f"Launch failed: {msg}")
 
     def _quick_optimize(self):
-        from core.optimizer import (apply_ultimate_power_plan, set_game_mode,
-                                     set_core_parking, set_mouse_precision,
-                                     disable_nagle_algorithm)
-        self._append_console("\n[] Applying quick optimizations...")
-        apply_ultimate_power_plan()
-        set_game_mode(True)
-        set_core_parking(True)
-        set_mouse_precision(False)
-        disable_nagle_algorithm(True)
-        self._append_console("[✓] Power plan → Ultimate Performance")
-        self._append_console("[✓] Windows Game Mode enabled")
-        self._append_console("[✓] Core parking disabled")
-        self._append_console("[✓] Mouse acceleration disabled")
-        self._append_console("[✓] Nagle algorithm disabled")
-        self._append_console("[✓] Quick optimization complete!")
-        self._sys_labels["Optimizations"].setText("Quick Optimize ✓")
-        self._sys_labels["Optimizations"].setStyleSheet(
-            "font-size: 11px; color: #00FF88; font-weight: 700;")
+        self._append_console("\n[] Applying quick optimizations in background...")
+
+        def _worker():
+            try:
+                from core.optimizer import (apply_ultimate_power_plan, set_game_mode,
+                                             set_core_parking, set_mouse_precision,
+                                             disable_nagle_algorithm)
+                apply_ultimate_power_plan()
+                QTimer.singleShot(0, lambda: self._append_console("[✓] Power plan → Ultimate Performance"))
+
+                set_game_mode(True)
+                QTimer.singleShot(0, lambda: self._append_console("[✓] Windows Game Mode enabled"))
+
+                set_core_parking(True)
+                QTimer.singleShot(0, lambda: self._append_console("[✓] Core parking disabled"))
+
+                set_mouse_precision(False)
+                QTimer.singleShot(0, lambda: self._append_console("[✓] Mouse acceleration disabled"))
+
+                disable_nagle_algorithm(True)
+                QTimer.singleShot(0, lambda: self._append_console("[✓] Nagle algorithm disabled"))
+
+                def _done():
+                    self._append_console("[✓] Quick optimization complete!")
+                    if "Optimizations" in self._sys_labels:
+                        self._sys_labels["Optimizations"].setText("Quick Optimize ✓")
+                        self._sys_labels["Optimizations"].setStyleSheet(
+                            "font-size: 11px; color: #00FF88; font-weight: 700;")
+                QTimer.singleShot(0, _done)
+            except Exception as e:
+                QTimer.singleShot(0, lambda: self._append_console(f"[✗] Quick optimize error: {e}"))
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     def _start_hw_timer(self):
         """Start timer to update hardware gauges."""
@@ -441,3 +456,11 @@ class HomePage(QWidget):
         plan = get_power_plan()
         self._sys_labels["Power Plan"].setText(plan)
         self._sys_labels["Active Profile"].setText("Mid-Range")
+
+    def closeEvent(self, event):
+        for timer_name in ('_hw_timer', '_conn_timer', '_info_timer'):
+            t = getattr(self, timer_name, None)
+            if t and t.isActive():
+                t.stop()
+        super().closeEvent(event)
+

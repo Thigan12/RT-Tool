@@ -285,65 +285,80 @@ def set_gameloop_priority(level="high"):
 
 # ── Apply Full Optimization Profile ──────────────────────────────────────────
 
-def apply_profile(profile_name: str):
-    """Apply a named optimization profile."""
-    profiles = {
-        "budget": {
-            "power_plan": "high",
-            "game_mode": True,
-            "core_parking": True,
-            "mouse_precision": False,
-            "nagle": True,
-            "visual_fx": True,
-            "timer": True,
-        },
-        "mid": {
-            "power_plan": "high",
-            "game_mode": True,
-            "core_parking": True,
-            "mouse_precision": False,
-            "nagle": True,
-            "visual_fx": True,
-            "timer": True,
-        },
-        "high": {
-            "power_plan": "ultimate",
-            "game_mode": True,
-            "core_parking": True,
-            "mouse_precision": False,
-            "nagle": True,
-            "visual_fx": True,
-            "timer": True,
-        },
-        "enthusiast": {
-            "power_plan": "ultimate",
-            "game_mode": True,
-            "core_parking": True,
-            "mouse_precision": False,
-            "nagle": True,
-            "visual_fx": True,
-            "timer": True,
-        },
-    }
+def apply_profile_settings(s: dict):
+    """Apply a settings dictionary directly to system, registry, and GameLoop."""
+    if not s or not isinstance(s, dict):
+        return {}
 
-    cfg = profiles.get(profile_name.lower(), profiles["mid"])
     results = {}
-
-    if cfg["power_plan"] == "ultimate":
+    pp = s.get("power_plan", "high_performance")
+    if "ultimate" in pp:
         ok, msg = apply_ultimate_power_plan()
-    else:
+    elif "high" in pp:
         ok, _ = _run(f'powercfg /setactive {HIGH_PERF_GUID}')
         msg = "High Performance"
+    elif "balanced" in pp:
+        restore_balanced_power_plan()
+        ok, msg = True, "Balanced"
+    else:
+        ok, msg = True, pp
     results["power_plan"] = (ok, msg)
 
-    set_game_mode(cfg["game_mode"])
-    set_core_parking(cfg["core_parking"])
-    set_mouse_precision(not cfg["mouse_precision"])  # False = disabled
-    if cfg["nagle"]:
-        disable_nagle_algorithm()
-    optimize_visual_effects(cfg["visual_fx"])
-    set_timer_resolution(cfg["timer"])
+    if "game_mode" in s:
+        set_game_mode(s["game_mode"])
 
+    if "core_parking" in s:
+        set_core_parking(s["core_parking"])
+
+    if "mouse_precision_off" in s:
+        set_mouse_precision(not s["mouse_precision_off"])
+    elif "mouse_precision" in s:
+        set_mouse_precision(s["mouse_precision"])
+
+    if s.get("nagle_disabled") or s.get("nagle"):
+        disable_nagle_algorithm()
+
+    if "visual_fx_perf" in s:
+        optimize_visual_effects(s["visual_fx_perf"])
+    elif "visual_fx" in s:
+        optimize_visual_effects(s["visual_fx"])
+
+    if "timer_resolution" in s:
+        set_timer_resolution(s["timer_resolution"])
+    elif "timer" in s:
+        set_timer_resolution(s["timer"])
+
+    if s.get("kill_bloat"):
+        try:
+            from core.process_manager import kill_bloat
+            kill_bloat()
+        except Exception:
+            pass
+
+    if s.get("ram_cleanup"):
+        clear_ram_standby()
+
+    if "fps_target" in s:
+        try:
+            from core.registry_manager import set_gameloop_value, REG_DWORD
+            fps = int(s["fps_target"])
+            set_gameloop_value("TargetFPS", fps, REG_DWORD)
+            if fps >= 90:
+                set_gameloop_value("FPS_Extreme", 1, REG_DWORD)
+                set_gameloop_value("VSyncEnabled", 0, REG_DWORD)
+        except Exception:
+            pass
+
+    return results
+
+
+def apply_profile(profile_name: str):
+    """Apply a named optimization profile."""
+    from core.profile_manager import load_profile, save_active_profile
+    prof = load_profile(profile_name)
+    s = prof.get("settings", {})
+    results = apply_profile_settings(s)
+    save_active_profile(profile_name, s)
     return results
 
 

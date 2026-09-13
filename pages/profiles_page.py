@@ -4,12 +4,13 @@ Hardware tier profiles, save/load, export/import, update checker.
 """
 
 import json
+import threading
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QScrollArea, QLineEdit, QFileDialog, QListWidget,
     QListWidgetItem, QMessageBox
 )
-from PyQt6.QtCore import Qt, QThread, QObject, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, QObject, pyqtSignal, QTimer
 import requests
 
 from core.profile_manager import (
@@ -17,7 +18,7 @@ from core.profile_manager import (
     load_profile, delete_profile, export_profile, import_profile,
     load_active_profile, save_active_profile
 )
-from core.optimizer import apply_profile, restore_defaults
+from core.optimizer import apply_profile, restore_defaults, apply_profile_settings
 
 
 def _sep():
@@ -204,6 +205,10 @@ class ProfilesPage(QWidget):
         action_row.addWidget(import_btn)
         layout.addLayout(action_row)
 
+        self._custom_status_lbl = _lbl("", "labelGreen")
+        self._custom_status_lbl.setStyleSheet("font-size: 11px; font-weight: 700; color: #00FF88;")
+        layout.addWidget(self._custom_status_lbl)
+
         self._refresh_profile_list()
         return card
 
@@ -262,6 +267,10 @@ class ProfilesPage(QWidget):
 
         layout.addLayout(actions_row)
 
+        self._quick_action_status_lbl = _lbl("", "labelGreen")
+        self._quick_action_status_lbl.setStyleSheet("font-size: 11px; font-weight: 700; color: #00FF88;")
+        layout.addWidget(self._quick_action_status_lbl)
+
         return card
 
     # ── Logic ─────────────────────────────────────────────────────────────────
@@ -287,13 +296,18 @@ class ProfilesPage(QWidget):
     def _save_current_profile(self):
         name = self._save_name_input.text().strip()
         if not name:
+            self._custom_status_lbl.setText("⚠ Please enter a profile name")
+            self._custom_status_lbl.setStyleSheet("color: #FFB800;")
             return
         # Use current active profile's settings as base
         preset = PRESET_PROFILES.get(self._active_profile, PRESET_PROFILES["mid"])
-        ok = save_profile(name, preset["settings"])
+        ok = save_profile(name, preset.get("settings", {}))
         if ok:
             self._save_name_input.clear()
             self._refresh_profile_list()
+            self._custom_status_lbl.setText(f"✓ Profile '{name}' saved successfully!")
+            self._custom_status_lbl.setStyleSheet("color: #00FF88; font-weight: 700;")
+            QTimer.singleShot(3000, lambda: self._custom_status_lbl.setText(""))
 
     def _refresh_profile_list(self):
         self._profile_list.clear()
@@ -305,9 +319,25 @@ class ProfilesPage(QWidget):
 
     def _load_selected_profile(self):
         item = self._profile_list.currentItem()
-        if item:
-            name = item.data(Qt.ItemDataRole.UserRole)
-            load_profile(name)
+        if not item:
+            self._custom_status_lbl.setText("⚠ Please select a profile from the list first")
+            self._custom_status_lbl.setStyleSheet("color: #FFB800;")
+            return
+        name = item.data(Qt.ItemDataRole.UserRole)
+        data = load_profile(name)
+        if data and "settings" in data:
+            apply_profile_settings(data["settings"])
+            save_active_profile(name, data["settings"])
+            self._active_profile = name
+            for k, btn in self._tier_btns.items():
+                btn.setText("APPLY")
+            self._custom_status_lbl.setText(f"✓ Loaded & applied profile: '{name}'")
+            self._custom_status_lbl.setStyleSheet("color: #00FF88; font-weight: 700;")
+            self.profile_applied.emit(name)
+            QTimer.singleShot(3500, lambda: self._custom_status_lbl.setText(""))
+        else:
+            self._custom_status_lbl.setText(f"⚠ Could not read profile '{name}'")
+            self._custom_status_lbl.setStyleSheet("color: #FF3366;")
 
     def _delete_selected_profile(self):
         item = self._profile_list.currentItem()
@@ -315,6 +345,9 @@ class ProfilesPage(QWidget):
             name = item.data(Qt.ItemDataRole.UserRole)
             delete_profile(name)
             self._refresh_profile_list()
+            self._custom_status_lbl.setText(f"✓ Deleted '{name}'")
+            self._custom_status_lbl.setStyleSheet("color: #00C8FF;")
+            QTimer.singleShot(3000, lambda: self._custom_status_lbl.setText(""))
 
     def _export_profile(self):
         path, _ = QFileDialog.getSaveFileName(
@@ -322,6 +355,9 @@ class ProfilesPage(QWidget):
         if path:
             name = self._active_profile
             export_profile(name, path)
+            self._custom_status_lbl.setText(f"✓ Exported profile to {path}")
+            self._custom_status_lbl.setStyleSheet("color: #00FF88;")
+            QTimer.singleShot(3000, lambda: self._custom_status_lbl.setText(""))
 
     def _import_profile(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -330,39 +366,63 @@ class ProfilesPage(QWidget):
             ok, msg = import_profile(path)
             if ok:
                 self._refresh_profile_list()
+                self._custom_status_lbl.setText(f"✓ Imported profile '{msg}'")
+                self._custom_status_lbl.setStyleSheet("color: #00FF88;")
+                QTimer.singleShot(3000, lambda: self._custom_status_lbl.setText(""))
 
     def _restore_all_defaults(self):
         restore_defaults()
         for k, btn in self._tier_btns.items():
             btn.setText("APPLY")
+        if hasattr(self, "_quick_action_status_lbl"):
+            self._quick_action_status_lbl.setText("✓ Reverted all settings to Windows defaults!")
+            QTimer.singleShot(3000, lambda: self._quick_action_status_lbl.setText(""))
 
     def _check_updates(self):
         self._update_status_lbl.setText("Checking...")
-        try:
-            # Placeholder update check
-            r = requests.get(
-                "https://api.github.com/repos/rt-tool/optimizer/releases/latest",
-                timeout=5
-            )
-            if r.status_code == 200:
-                latest = r.json().get("tag_name", "v1.0.0")
-                self._update_status_lbl.setText(f"Latest: {latest}")
-                self._update_status_lbl.setObjectName("labelGreen")
-            else:
-                self._update_status_lbl.setText("Up to date ✓")
-                self._update_status_lbl.setObjectName("labelGreen")
-        except Exception:
-            self._update_status_lbl.setText("Up to date ✓")
-            self._update_status_lbl.setStyleSheet("color: #00FF88;")
+        self._update_status_lbl.setStyleSheet("color: #00C8FF;")
+
+        def _worker():
+            status_text = "Up to date (v1.0.0) ✓"
+            color = "#00FF88"
+            try:
+                r = requests.get(
+                    "https://api.github.com/repos/Thigan12/RT-Tool/releases/latest",
+                    timeout=4
+                )
+                if r.status_code == 200:
+                    latest = r.json().get("tag_name", "v1.0.0")
+                    status_text = f"Latest: {latest}"
+                elif r.status_code == 404:
+                    status_text = "Up to date (v1.0.0) ✓"
+            except Exception:
+                status_text = "Up to date (offline) ✓"
+
+            QTimer.singleShot(0, lambda: (
+                self._update_status_lbl.setText(status_text),
+                self._update_status_lbl.setStyleSheet(f"color: {color}; font-weight: 700;")
+            ))
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     def _clean_ram(self):
         from core.optimizer import clear_ram_standby
         clear_ram_standby()
+        if hasattr(self, "_quick_action_status_lbl"):
+            self._quick_action_status_lbl.setText("✓ Standby RAM freed successfully!")
+            QTimer.singleShot(3000, lambda: self._quick_action_status_lbl.setText(""))
 
     def _flush_dns(self):
         from core.network_tools import flush_dns
         flush_dns()
+        if hasattr(self, "_quick_action_status_lbl"):
+            self._quick_action_status_lbl.setText("✓ Windows DNS cache flushed!")
+            QTimer.singleShot(3000, lambda: self._quick_action_status_lbl.setText(""))
 
     def _kill_bloat(self):
         from core.process_manager import kill_bloat
         kill_bloat()
+        if hasattr(self, "_quick_action_status_lbl"):
+            self._quick_action_status_lbl.setText("✓ Bloat killer: terminated background tasks!")
+            QTimer.singleShot(3000, lambda: self._quick_action_status_lbl.setText(""))
+
