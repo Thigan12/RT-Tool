@@ -1,0 +1,7 @@
+PyQt6
+psutil
+pywin32
+WMI
+requests
+Pillow
+pyqtgraph
