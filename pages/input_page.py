@@ -276,8 +276,8 @@ class InputPage(QWidget):
         layout.addWidget(info)
 
         profiles_grid = QHBoxLayout()
-        profiles_grid.setSpacing(10)
-        self._dpi_cards = []
+        profiles_grid.setSpacing(12)
+        self._dpi_card_widgets = {}
         for name, dpi, color, sens in [
             ("Main Game", "800", "#FF6B00", 10),
             ("Sniping", "400", "#00C8FF", 6),
@@ -285,31 +285,65 @@ class InputPage(QWidget):
             ("Custom", "Current", "#FFD700", 10),
         ]:
             p_card = QPushButton()
-            p_card.setObjectName("card")
             p_card.setCursor(Qt.CursorShape.PointingHandCursor)
+            p_card.setMinimumHeight(92)
+            p_card.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: #0C1422;
+                    border: 1px solid #1A2740;
+                    border-radius: 8px;
+                    padding: 4px;
+                }}
+                QPushButton:hover {{
+                    background-color: #111C30;
+                    border: 1px solid {color}88;
+                }}
+            """)
             p_layout = QVBoxLayout(p_card)
+            p_layout.setContentsMargins(8, 10, 8, 10)
+            p_layout.setSpacing(3)
             p_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
             name_lbl = QLabel(name)
             name_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            name_lbl.setStyleSheet(f"font-size: 11px; color: #5A7090;")
+            name_lbl.setStyleSheet("font-size: 11px; font-weight: 600; color: #7A90B0; background: transparent;")
+            name_lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+
             dpi_lbl = QLabel(dpi)
             dpi_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            dpi_lbl.setStyleSheet(
-                f"font-size: 20px; font-weight: 800; color: {color};")
+            dpi_lbl.setStyleSheet(f"font-size: 18px; font-weight: 800; color: {color}; background: transparent; padding: 2px 0;")
+            dpi_lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+
             dpi_unit = QLabel(f"Sens: {sens}")
             dpi_unit.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            dpi_unit.setStyleSheet("font-size: 10px; color: #8A9FB8;")
+            dpi_unit.setStyleSheet("font-size: 10px; color: #5A7090; background: transparent;")
+            dpi_unit.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+
             p_layout.addWidget(name_lbl)
             p_layout.addWidget(dpi_lbl)
             p_layout.addWidget(dpi_unit)
+
             p_card.clicked.connect(lambda _, s=sens, n=name: self._apply_dpi_preset(s, n))
             profiles_grid.addWidget(p_card, 1)
+            self._dpi_card_widgets[name] = (p_card, color)
 
         layout.addLayout(profiles_grid)
 
-        self._dpi_status_lbl = QLabel("Profile: Main Game (Sens 10)")
+        self._dpi_status_lbl = QLabel("Active Profile: Main Game")
         self._dpi_status_lbl.setStyleSheet("font-size: 11px; color: #00FF88;")
         layout.addWidget(self._dpi_status_lbl)
+
+        # Highlight default profile
+        if "Main Game" in self._dpi_card_widgets:
+            btn, col = self._dpi_card_widgets["Main Game"]
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: #0E1A2E;
+                    border: 2px solid {col};
+                    border-radius: 8px;
+                    padding: 3px;
+                }}
+            """)
 
         return card
 
@@ -342,6 +376,31 @@ class InputPage(QWidget):
         self._set_sensitivity(sens_int)
         self._dpi_status_lbl.setText(f"✓ Applied Profile: {name} (Sensitivity {sens_int})")
         QTimer.singleShot(3000, lambda: self._dpi_status_lbl.setText(f"Active Profile: {name}"))
+
+        if hasattr(self, '_dpi_card_widgets'):
+            for card_name, (card_btn, card_color) in self._dpi_card_widgets.items():
+                if card_name == name:
+                    card_btn.setStyleSheet(f"""
+                        QPushButton {{
+                            background-color: #0E1A2E;
+                            border: 2px solid {card_color};
+                            border-radius: 8px;
+                            padding: 3px;
+                        }}
+                    """)
+                else:
+                    card_btn.setStyleSheet(f"""
+                        QPushButton {{
+                            background-color: #0C1422;
+                            border: 1px solid #1A2740;
+                            border-radius: 8px;
+                            padding: 4px;
+                        }}
+                        QPushButton:hover {{
+                            background-color: #111C30;
+                            border: 1px solid {card_color}88;
+                        }}
+                    """)
 
     def _set_polling_rate(self, idx):
         """Set mouse polling rate via registry (requires compatible driver)."""
